@@ -163,7 +163,7 @@ class TextRedaction:
                 )
                 if self.device == "cuda":
                     torch.cuda.empty_cache()
-        return headers,out
+        return headers
 
 def update_headers(digipath_headers):
     updated_headers = digipath_headers
