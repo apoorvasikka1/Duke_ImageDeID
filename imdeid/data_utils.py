@@ -1,5 +1,5 @@
 import cv2
-import imgproc
+import imdeid.imgproc
 import torch
 
 import numpy as np
@@ -12,7 +12,7 @@ import pydicom.pixel_data_handlers.util as util
 from dataclasses import dataclass, field
 from typing import List, Optional, Dict, Tuple
 
-from utils import Box
+from imdeid.utils import Box
 import concurrent.futures
 from io import BytesIO
 from PIL import Image

@@ -8,8 +8,8 @@ import torch
 from torch.autograd import Variable
 from dataclasses import dataclass, asdict
 
-import imgproc
-import craft_utils
+import imdeid.imgproc
+import imdeid.craft_utils as craft_utils
 from collections import OrderedDict
 
 class Box:

@@ -16,15 +16,15 @@ import pydicom as dicom
 import pydicom.pixel_data_handlers.util as util
 from typing import List, Optional, Dict, Tuple
 
-from craft import CRAFT
-from data_utils import (
+from imdeid.craft import CRAFT
+from imdeid.data_utils import (
     ImageDataset,
     DicomProcessingResult,
     collate_fn,
     run_digipath_deid,
 )
 
-from utils import (
+from imdeid.utils import (
     copyStateDict,
     test_net,
     convert_boxes,

@@ -21,22 +21,16 @@ setup(
         "patchify==0.2.3",
         "Pillow==9.2.0",
         "pydicom==2.3.0",
-        "pytorch_pretrained_vit==0.0.7",
         "scikit_learn==1.1.2",
         "scipy==1.7.3",
         "tqdm==4.62.3",
         "python-gdcm==3.0.19",
-        "pylibjpeg==1.4.0",
-        "vision_transformer_pytorch==1.0.3",
-        "transformers==4.29.2",
-        "python-doctr==0.6.0",
-        "fuzzywuzzy==0.18.0",
-        "rapidfuzz==2.15.1",
-        "python-Levenshtein",
+ 
+       
     ],
     extras_require={
-        "testing": ["matplotlib==3.4.2", "SimpleITK"],
+        "testing": ["matplotlib==3.4.2"],
         "gpu": ["cupy-cuda12x==12.0.0"],
     },
-    dependency_links=["https://cdap-repo.nferx.com/repository/pypi-all/packages/"],
+    dependency_links=["https://repo.nferx.com/repository/pypi-all/simple/"],
 )
