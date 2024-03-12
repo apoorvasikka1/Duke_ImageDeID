@@ -8,8 +8,14 @@ import torch
 from torch.autograd import Variable
 from dataclasses import dataclass, asdict
 
-import imdeid.imgproc
-import imdeid.craft_utils as craft_utils
+import craft_utils
+from collections import OrderedDict
+from typing import List, Optional, Union, Tuple, Dict
+
+from .imgproc import resize_aspect_ratio, normalizeMeanVariance
+from .craft_utils import getDetBoxes, adjustResultCoordinates
+
+from copy import deepcopy
 from collections import OrderedDict
 
 class Box:
@@ -123,59 +129,146 @@ def copyStateDict(state_dict):
         new_state_dict[name] = v
     return new_state_dict
 
-def test_net(net, image, text_threshold, link_threshold, low_text, cuda, poly, refine_net=None):
-    #used for craft
-    boxes_,pixel_values_list=[],[]
-    for each in image:
-        canvas_size = 1280
-        mag_ratio = 1.5
-        # resize
-        img_resized, target_ratio, size_heatmap = imgproc.resize_aspect_ratio(each, canvas_size, interpolation=cv2.INTER_LINEAR, mag_ratio=mag_ratio)
-        ratio_h = ratio_w = 1 / target_ratio
-        bboxes_barcode = detect_barcode(each)
-        # preprocessing
-        x = imgproc.normalizeMeanVariance(img_resized)
-        x = torch.from_numpy(x).permute(2, 0, 1)    # [h, w, c] to [c, h, w]
-        x = Variable(x.unsqueeze(0))                # [c, h, w] to [b, c, h, w]
+def craft_det(
+    net: torch.nn.Module,
+    each: np.ndarray,
+    text_threshold: float,
+    link_threshold: float,
+    low_text: float,
+    cuda: bool,
+    poly: bool,
+    refine_net: Optional[torch.nn.Module] = None,
+) -> Tuple[List[List[Box]], List[np.ndarray]]:
+    """
+    Perform text detection using the CRAFT (Character Region Awareness for Text Detection) model.
 
-        if cuda:
-            x = x.cuda()
-            
-        # forward pass
+    Args:
+    - net (torch.nn.Module): The CRAFT model.
+    - each (np.ndarray): Input image as a NumPy array.
+    - text_threshold (float): Threshold for text segmentation.
+    - link_threshold (float): Threshold for link segmentation.
+    - low_text (float): Threshold for low text.
+    - cuda (bool): Flag indicating whether to use CUDA for GPU acceleration.
+    - poly (bool): Flag indicating whether to use polygon representation for text regions.
+    - refine_net (Optional[torch.nn.Module]): Refinement network for link segmentation (default is None).
+
+    Returns:
+    - Tuple[List[List[Box]], List[np.ndarray]]: A tuple containing:
+        - List[List[Box]]: Detected bounding boxes for text regions. Each bounding box is represented
+          as a list [x_min, y_min, x_max, y_max].
+        - List[np.ndarray]: List of pixel values for each detected text region in the original image.
+    """
+    canvas_size = 1280
+    mag_ratio = 1.5
+
+    # Resize
+    img_resized, target_ratio, size_heatmap = resize_aspect_ratio(
+        each, canvas_size, interpolation=cv2.INTER_LINEAR, mag_ratio=mag_ratio
+    )
+    ratio_h = ratio_w = 1 / target_ratio
+
+    # Preprocessing
+    x = normalizeMeanVariance(img_resized)
+    x = torch.from_numpy(x).permute(2, 0, 1)  # [h, w, c] to [c, h, w]
+    x = Variable(x.unsqueeze(0))  # [c, h, w] to [b, c, h, w]
+
+    if cuda:
+        x = x.cuda()
+
+    # Forward pass
+    with torch.no_grad():
+        y, feature = net(x)
+
+    # Make score and link map
+    score_text = y[0, :, :, 0].cpu().data.numpy()
+    score_link = y[0, :, :, 1].cpu().data.numpy()
+
+    # Refine link
+    if refine_net is not None:
         with torch.no_grad():
-            y, feature = net(x)
+            y_refiner = refine_net(y, feature)
+        score_link = y_refiner[0, :, :, 0].cpu().data.numpy()
 
-        # make score and link map
-        score_text = y[0,:,:,0].cpu().data.numpy()
-        score_link = y[0,:,:,1].cpu().data.numpy()
+    # Post-processing
+    boxes, polys = getDetBoxes(
+        score_text, score_link, text_threshold, link_threshold, low_text, poly
+    )
 
-        # refine link
-        if refine_net is not None:
-            with torch.no_grad():
-                y_refiner = refine_net(y, feature)
-            score_link = y_refiner[0,:,:,0].cpu().data.numpy()
+    # Coordinate adjustment
+    boxes = adjustResultCoordinates(boxes, ratio_w, ratio_h)
+    polys = adjustResultCoordinates(polys, ratio_w, ratio_h)
+    for k in range(len(polys)):
+        if polys[k] is None:
+            polys[k] = boxes[k]
 
-        # Post-processing
-        boxes, polys = craft_utils.getDetBoxes(score_text, score_link, text_threshold, link_threshold, low_text, poly)
-        
-        # coordinate adjustment
-        boxes = craft_utils.adjustResultCoordinates(boxes, ratio_w, ratio_h)
-        polys = craft_utils.adjustResultCoordinates(polys, ratio_w, ratio_h)
-        for k in range(len(polys)):
-            if polys[k] is None: polys[k] = boxes[k]
+    # Render results (optional)
+    render_img = score_text.copy()
+    render_img = np.hstack((render_img, score_link))
+    # ret_score_text = cvt2HeatmapImg(render_img)
 
-        # render results (optional)
-        render_img = score_text.copy()
-        render_img = np.hstack((render_img, score_link))
-   
-        boxes = convert_boxes(boxes,each.shape)
-        boxes_.append(boxes+bboxes_barcode)
-        pixel_values_list.extend(crop_image_regions(each, boxes))
+    boxes = convert_boxes(boxes, each.shape)
+    pixel_values_list = crop_image_regions(each, boxes)
+
+    return boxes, pixel_values_list
+
+
+def rotate_and_translate_coordinates(boxes, orig_image):
+    boxes_r = []
+    if len(boxes) > 0:
+        for box in boxes:
+            # Extract rotated bounding box coordinates
+            rx, ry, rw, rh = box.y, box.x, box.h, box.w
+            rx = rx + rw
+            ry = ry + rh
+
+            rox, roy, row, roh = ry, orig_image.shape[0] - rx, rh, rw
+
+            # Update the box dictionary with original coordinates
+            box.x, box.y, box.w, box.h = roy, rox - row, roh, row
+            boxes_r.append(box)
+
+    return boxes_r
+
+
+def test_net(
+    net, image, text_threshold, link_threshold, low_text, cuda, poly, refine_net=None
+):
+    # used for craft
+    boxes_, pixel_values_list = [], []
+    for each in image:
+        rotated_image = cv2.transpose(each)
+        rotated_image = cv2.flip(rotated_image, 1)  # 1 for horizontal flip (90 degrees)
+        boxes, pixel_values_list_ = craft_det(
+            net,
+            each,
+            text_threshold,
+            link_threshold,
+            low_text,
+            cuda,
+            poly,
+            refine_net=None,
+        )
+        boxes_r, pixel_values_list_r = craft_det(
+            net,
+            rotated_image,
+            text_threshold,
+            link_threshold,
+            low_text,
+            cuda,
+            poly,
+            refine_net=None,
+        )
+        boxes_translated = rotate_and_translate_coordinates(boxes_r, each)
+        bboxes_barcode = detect_barcode(each)
+
+        boxes_.append(boxes + boxes_translated + bboxes_barcode)
+        pixel_values_list.extend(pixel_values_list_)
+        pixel_values_list.extend(pixel_values_list_r)
         pixel_values_list.extend(crop_image_regions(each, bboxes_barcode))
     return boxes_, pixel_values_list
 
 
-def crop_image_regions(image, m_bboxes, target_size=(384,384)):
+def crop_image_regions(image, m_bboxes, target_size=(224,224)):
     """
     Crop image regions based on the provided bounding boxes.
 
@@ -254,7 +347,7 @@ def assign_recognized_texts(
         
         frame_boxes, box_keys, headers_, filenames_ = [], [], [], []
         for j, sub_box in enumerate(each_frame):
-            sub_box.text = 1
+            sub_box.text = rec_text_list[count]
             if (rec_text_list[count]==0) & (sub_box.BarcodeBox == False):
                 sub_box.retainbox = True
             frame_boxes.append(sub_box)
@@ -344,17 +437,17 @@ def update_box_coordinates_40x(digipath_headers, index, downsample_level):
     digipath_headers[index].boxes = updated_boxes
     return digipath_headers
 
-def save_headers_ascsv(updated_headers, out_dir):
+def save_headers_ascsv(updated_headers, out_dir, filename):
     create_directory(out_dir)
     # Convert each dataclass instance to a dictionary
     dict_list = [asdict(instance) for instance in updated_headers]
     # Extract the dictionary and remove unwanted keys
-    dict_list = [{k: v for k, v in item.items() if k not in ['boxes', 'PhotometricInterpretation','PixelArrayLoaded']} for item in dict_list]
+    dict_list = [{k: v for k, v in item.items() if k not in ['boxes', 'PhotometricInterpretation']} for item in dict_list]
 
 
     # CSV file path
     file_exists=False
-    file_path = out_dir + 'output_noclass.csv'
+    file_path = out_dir + filename
 
     try:
         with open(file_path,'r') as file:

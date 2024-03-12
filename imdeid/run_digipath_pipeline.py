@@ -16,15 +16,15 @@ import pydicom as dicom
 import pydicom.pixel_data_handlers.util as util
 from typing import List, Optional, Dict, Tuple
 
-from imdeid.craft import CRAFT
-from imdeid.data_utils import (
+from .craft import CRAFT
+from .data_utils import (
     ImageDataset,
     DicomProcessingResult,
     collate_fn,
     run_digipath_deid,
 )
 
-from imdeid.utils import (
+from .utils import (
     copyStateDict,
     test_net,
     convert_boxes,
@@ -95,7 +95,7 @@ class TextRedaction:
         predicted_class_ = []
         
         if len(pixel_values_list) > 0:
-            '''
+            
             if torch.cat(pixel_values_list).shape[0] < 32:
                 pixel_values_combined = torch.cat(pixel_values_list, dim=0)
                 
@@ -104,7 +104,6 @@ class TextRedaction:
                 )
                 
                 predicted_class_.extend(pred_class)
-                # print(generated_ids_)
             else:
                 sub_batch_size = 32  # Specify the desired batch size
                 pixel_values_combined = torch.cat(pixel_values_list)
@@ -125,9 +124,9 @@ class TextRedaction:
 
                 if self.device == "cuda":
                     torch.cuda.empty_cache()
-            '''
+            
             #print(predicted_class_)
-            predicted_class_= [1]*len(pixel_values_list)
+            #predicted_class_= [1]*len(pixel_values_list)
             headers = assign_recognized_texts(
                 bboxes_, predicted_class_, header_indexes, headers
             )
@@ -141,7 +140,6 @@ class TextRedaction:
         headers: List[DicomProcessingResult],
         batch_size: int = 16,
     ) -> List:
-        
         if len(headers) == 0:
             raise ValueError("No Input paths specified")
 
@@ -151,6 +149,8 @@ class TextRedaction:
         )
         mini_batch_size = batch_size
         for batch_images, indexes in (data_loader):
+            for each in indexes:
+                headers[each].PixelArrayLoaded = True
             if batch_images == []:
                 continue
                 
@@ -170,7 +170,7 @@ def update_headers(digipath_headers):
     for each in range(len(digipath_headers)):
         header = digipath_headers[each]
         text= False
-        if len(header.boxes)==0:
+        if len(header.boxes)==0 and header.PixelArrayLoaded==True:
             updated_headers[each].keep_dicom = True
         else:
             for each1 in header.boxes:
@@ -209,10 +209,10 @@ if __name__ == "__main__":
     # Get the directory of the script
     args = create_args()
     script_dir = os.path.dirname(os.path.abspath(__file__))
-    craft_model_dir = os.path.join(script_dir,'model_weights/craft_models/craft_mlt_25k.pth')
-    fpr_model_dir = os.path.join(script_dir, 'model_weights/tissue_text_models/v139.pth')
-
-    out_dir = args.op_dir
+    #craft_model_dir = os.path.join(script_dir,'model_weights/craft_models/craft_mlt_25k.pth')
+    #fpr_model_dir = os.path.join(script_dir, 'model_weights/tissue_text_models/v139.pth')
+    '''
+     out_dir = args.op_dir
     batch_size = 16
     cuda_bool = args.cuda_bool
     if cuda_bool is True:
@@ -229,5 +229,6 @@ if __name__ == "__main__":
     digipath_headers = text_det.run_textredaction(headers, batch_size)
     updated_headers = update_headers(digipath_headers) 
     save_headers_ascsv(updated_headers,out_dir)
+    '''
     
     

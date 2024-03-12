@@ -1,5 +1,5 @@
 import cv2
-import imdeid.imgproc
+import imgproc
 import torch
 
 import numpy as np
@@ -12,7 +12,7 @@ import pydicom.pixel_data_handlers.util as util
 from dataclasses import dataclass, field
 from typing import List, Optional, Dict, Tuple
 
-from imdeid.utils import Box
+from .utils import Box
 import concurrent.futures
 from io import BytesIO
 from PIL import Image
@@ -66,11 +66,13 @@ class ImageDataset(Dataset):
         try:
             header = self.headers[index]
             ds_head = dicom.dcmread(header.dicom_SOPID)
-            #images = ds_head.pixel_array
-            images = convert_to_1x(ds_head) 
+            images = convert_to_1x(ds_head)
+            #print(images.shape)
+            #images = cv2.flip(images,1)
+            #images = images[512:,:,:] 
             #if ds_head.PhotometricInterpretation == 'YBR_FULL_422':
             #    images = util.convert_color_space(images,'YBR_FULL_422','RGB')
-            cv2.imwrite('/root/apoorva/jpegs/'+header.dicom_SOPID.split('/')[-1].replace('.dcm','.jpeg'),images)
+            #cv2.imwrite('/root/apoorva/duke_jpegs_data/jpegs_validation_data/'+header.dicom_SOPID.split('/')[-1].replace('.dcm','.jpeg'),images)
             
         except Exception:
             return None  # Move to the next index  
